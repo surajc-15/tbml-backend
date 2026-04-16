@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment files
+.env
+.env.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS/editor
+.DS_Store
+
+# Large datasets (keep locally, don't push to GitHub)
+Banks/
+
+# Model artifacts (keep if you want; comment out to commit)
+# *.npz
