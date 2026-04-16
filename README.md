@@ -1,22 +1,73 @@
-# Major Project — Trade‑Based AML (TBML) with Memgraph + Kafka + Federated Learning
+# Trade‑Based AML (TBML) — Memgraph + Kafka + Federated Learning
 
-This repository implements a **trade‑based anti‑money‑laundering detection system** using:
+<p align="center">
+  <img src="federated_training_results.png" alt="Federated training results" width="49%" />
+  <img src="federated_tbml_results.png" alt="TBML results" width="49%" />
+</p>
 
-- **Memgraph** as the graph database (one instance per bank)
-- **Flower (FLWR)** for **federated learning** across banks
-- **Kafka** for **event streaming** (real‑time transaction events)
-- A **PyTorch / PyTorch Geometric** model that fuses:
-  - KYC/account signals (node features)
-  - SWIFT/payment signals (edge + temporal signals)
-  - Trade document signals (document features)
+A **trade‑based anti‑money‑laundering detection system** using:
+- **Memgraph** (one graph DB per bank)
+- **Flower (FLWR)** for **federated learning** (weights move, data stays)
+- **Kafka** for real‑time transaction events
+- A **PyTorch + PyTorch Geometric** model that fuses KYC + SWIFT + Trade‑doc signals
 
-## High-level flow
+> [!IMPORTANT]
+> This repo is configured for a **Memgraph‑only** pipeline. Large datasets in `Banks/` are intentionally **not** pushed to GitHub (GitHub blocks files > 100MB).
 
-1. Each bank has its own Memgraph instance (ports `4000`, `4001`, `4002`).
-2. Bank data is ingested into Memgraph (`Account → Transaction → Account` and `Transaction → Document`).
-3. Each bank runs a federated client to train locally on its own graph.
-4. The central federated server aggregates weights and saves `global_model.npz`.
-5. A real‑time inference service consumes Kafka events (topic `incoming_swift_messages`), fetches graph context from Memgraph, and predicts `CLEAN / REVIEW / STR`.
+---
+
+## Table of contents
+
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Quick start](#quick-start)
+- [Step-by-step setup](#step-by-step-setup)
+  - [1) Start Kafka](#1-start-kafka)
+  - [2) Start Memgraph (3 banks)](#2-start-memgraph-3-banks)
+  - [3) Provide bank datasets (local only)](#3-provide-bank-datasets-local-only)
+  - [4) Ingest data into Memgraph](#4-ingest-data-into-memgraph)
+  - [5) Federated training (Flower)](#5-federated-training-flower)
+  - [6) Real-time inference with Kafka](#6-real-time-inference-with-kafka)
+- [Configuration](#configuration)
+- [Notes / Troubleshooting](#notes--troubleshooting)
+- [Key files](#key-files)
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph BankA[Bank A]
+    MGA[(Memgraph :4000)]
+    CA[client.py --bank banka]
+    CA -->|query subgraphs| MGA
+  end
+
+  subgraph BankB[Bank B]
+    MGB[(Memgraph :4001)]
+    CB[client.py --bank bankb]
+    CB -->|query subgraphs| MGB
+  end
+
+  subgraph BankC[Bank C]
+    MGC[(Memgraph :4002)]
+    CC[client.py --bank bankc]
+    CC -->|query subgraphs| MGC
+  end
+
+  S[server.py (Flower server :8085)]
+  CA -->|model weights| S
+  CB -->|model weights| S
+  CC -->|model weights| S
+  S -->|global_model.npz| W[(Weights)]
+
+  K[(Kafka broker :19092)]
+  T[trigger.py] -->|topic: incoming_swift_messages| K
+  I[inference.py] -->|consume topic + fetch context| K
+  I --> MGA
+  I -->|predict| OUT[CLEAN / REVIEW / STR]
+```
 
 ---
 
@@ -26,12 +77,27 @@ This repository implements a **trade‑based anti‑money‑laundering detection
 - Python 3.9+
 - Docker + Docker Compose
 
-Python packages used in code:
+Python packages used by the code:
 - `flwr`, `torch`, `torch-geometric`, `pandas`, `numpy`, `neo4j` (Bolt driver), `kafka-python`, `scikit-learn`
 
-> Note: Installing **PyTorch Geometric** depends on your CUDA/CPU environment. Install PyTorch first, then follow the official PyG install instructions for your platform.
+> [!TIP]
+> PyTorch Geometric must match your PyTorch + CUDA/CPU build. Install PyTorch first, then install PyG for your platform.
 
 ---
+
+## Quick start
+
+If you already have the `Banks/` data available locally:
+
+1. Start Kafka
+2. Start 3 Memgraph instances
+3. Ingest `Banks/Bank_A|B|C` into Memgraph
+4. Train: run `server.py` + 3× `client.py`
+5. Run `inference.py` and fire an event with `trigger.py`
+
+---
+
+## Step-by-step setup
 
 ## 1) Start Kafka
 
@@ -47,14 +113,6 @@ docker network create major_project_network
 
 ```bash
 docker compose up -d
-```
-
-Kafka broker address used by the Python scripts:
-- default: `localhost:19092`
-- override (optional):
-
-```bash
-export KAFKA_BROKER=localhost:19092
 ```
 
 ---
@@ -82,10 +140,11 @@ docker run -d --name memgraph_bankc \
   memgraph/memgraph-platform
 ```
 
-(Optional) Memgraph UI:
-- Bank A: http://localhost:3000
-- Bank B: http://localhost:3001
-- Bank C: http://localhost:3002
+> [!NOTE]
+> Memgraph UI (optional):
+> - Bank A: http://localhost:3000
+> - Bank B: http://localhost:3001
+> - Bank C: http://localhost:3002
 
 ---
 
@@ -111,8 +170,6 @@ Banks/
     trade.csv
 ```
 
-Place your downloaded datasets into that structure.
-
 ---
 
 ## 4) Ingest data into Memgraph
@@ -123,7 +180,7 @@ Ingest all 3 banks into their respective Memgraph instances:
 python neo4j_ingestion.py
 ```
 
-If your `Banks/` folder is somewhere else, point ingestion to it:
+If your `Banks/` folder is somewhere else:
 
 ```bash
 export BANKS_DIR=/absolute/path/to/Banks
@@ -148,49 +205,50 @@ python client.py --bank bankb
 python client.py --bank bankc
 ```
 
-After training finishes, the server saves the aggregated model weights to:
+After training finishes, the server writes:
 - `global_model.npz`
 
 ---
 
 ## 6) Real-time inference with Kafka
 
-1. Start the inference consumer (uses Memgraph Bank A for graph context by default):
+1. Start inference:
 
 ```bash
 python inference.py
 ```
 
-2. Send a transaction event into Kafka (publishes to topic `incoming_swift_messages`):
+2. Send an event (publishes to topic `incoming_swift_messages`):
 
 ```bash
 python trigger.py
 ```
 
-The inference service will:
-- read the Kafka message
-- fetch sender/receiver/document context from Memgraph
-- run the model and print:
-  - `CLEAN` (0)
-  - `REVIEW` (1)
-  - `STR ALERT` (2)
+---
+
+## Configuration
+
+| Item | Default | Where |
+|---|---:|---|
+| Kafka broker | `localhost:19092` | `KAFKA_BROKER` env var or code defaults |
+| Kafka topic (inference) | `incoming_swift_messages` | [inference.py](inference.py) / [trigger.py](trigger.py) |
+| Memgraph Bank A | `bolt://localhost:4000` | [client.py](client.py), [inference.py](inference.py), [trigger.py](trigger.py) |
+| Memgraph Bank B | `bolt://localhost:4001` | [client.py](client.py) |
+| Memgraph Bank C | `bolt://localhost:4002` | [client.py](client.py) |
 
 ---
 
 ## Notes / Troubleshooting
 
-### Kafka port
-- This repo’s Kafka compose maps container `9092` → host `19092`.
-- Scripts default to `localhost:19092` and can be overridden with `KAFKA_BROKER`.
+> [!WARNING]
+> If Kafka is running somewhere else (e.g. local install on `9092`), set:
+>
+> ```bash
+> export KAFKA_BROKER=localhost:9092
+> ```
 
-### Memgraph ports
-- The federated clients expect Bolt at:
-  - Bank A: `bolt://localhost:4000`
-  - Bank B: `bolt://localhost:4001`
-  - Bank C: `bolt://localhost:4002`
-
-### Ignored large files
-- `Banks/` is intentionally not pushed to GitHub because GitHub blocks files over 100MB.
+- `Banks/` is not pushed to GitHub because GitHub blocks files over 100MB.
+- Older Neo4j demo scripts remain in the repo but are not required for the Memgraph-only pipeline.
 
 ---
 
@@ -202,5 +260,3 @@ The inference service will:
 - Memgraph ingestion: [neo4j_ingestion.py](neo4j_ingestion.py)
 - Real-time inference: [inference.py](inference.py)
 - Kafka trigger (event producer): [trigger.py](trigger.py)
-
-(Older demo scripts using Neo4j are still present but are not required for the Memgraph-only pipeline.)
