@@ -1,0 +1,11 @@
+flwr
+torch
+torch-geometric
+pandas
+numpy
+neo4j
+kafka-python
+scikit-learn
+sdv
+networkx
+matplotlib

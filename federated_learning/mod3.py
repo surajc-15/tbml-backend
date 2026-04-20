@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from utilities.path_config import get_bank_file
 
 def fix_weight_variance(file_path="trade_docs_enriched.csv"):
     df = pd.read_csv(file_path)
@@ -25,6 +26,6 @@ def fix_weight_variance(file_path="trade_docs_enriched.csv"):
     print(f"✅ Fixed variance in {file_path}. No more 0.0271 constants!")
 
 # Run for all bank folders
-for bank in ['bank_a_data', 'bank_b_data', 'bank_c_data']:
-    path = f"{bank}/trade_docs_enriched.csv"
+for bank in ['banka', 'bankb', 'bankc']:
+    path = get_bank_file(bank, "trade_docs_enriched.csv")
     fix_weight_variance(path)

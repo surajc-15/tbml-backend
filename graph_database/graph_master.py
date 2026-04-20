@@ -2,6 +2,8 @@ import pandas as pd
 from neo4j import GraphDatabase
 import os
 
+from utilities.path_config import get_bank_file, get_bank_path
+
 # ==========================================
 # 1. CONNECTION SETTINGS (Matches Screenshot)
 # ==========================================
@@ -10,7 +12,7 @@ USER     = "neo4j"
 PASSWORD = "password"  # <-- Change this to the password you set for 'trxn_graph'
 
 # Folder where your bank data is stored
-DATA_PATH = "./bank_a_data/" 
+DATA_PATH = get_bank_path("banka")
 
 class TBMLGraphLoader:
     def __init__(self):
@@ -31,15 +33,15 @@ class TBMLGraphLoader:
         # --- A. Check if files exist ---
         files = ["kyc.csv", "swift.csv", "trade_docs_enriched.csv"]
         for f in files:
-            if not os.path.exists(DATA_PATH + f):
-                print(f"❌ Error: {DATA_PATH + f} not found!")
+            if not os.path.exists(os.path.join(DATA_PATH, f)):
+                print(f"❌ Error: {os.path.join(DATA_PATH, f)} not found!")
                 return
 
         # --- B. Read Data ---
         print("📖 Reading Enriched CSVs...")
-        kyc = pd.read_csv(DATA_PATH + "kyc.csv")
-        swift = pd.read_csv(DATA_PATH + "swift.csv")
-        trade = pd.read_csv(DATA_PATH + "trade_docs_enriched.csv")
+        kyc = pd.read_csv(get_bank_file("banka", "kyc.csv"))
+        swift = pd.read_csv(get_bank_file("banka", "swift.csv"))
+        trade = pd.read_csv(get_bank_file("banka", "trade_docs_enriched.csv"))
 
         # --- C. Clear Old Data (Reset Graph) ---
         print("🗑  Clearing old graph nodes...")

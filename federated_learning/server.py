@@ -1,6 +1,11 @@
 import numpy as numpy
 import flwr as flwr
+import os
 from model import TBML_DetectionModel
+
+BASE_DIR = os.path.dirname(__file__)
+GLOBAL_MODEL_PATH = os.path.join(BASE_DIR, "global_model.npz")
+
 class modelStrategy(flwr.server.strategy.FedAvg):
     def aggregate_fit(self, curr_round, results, failures):
         aggregated_weights,_ = super().aggregate_fit(curr_round,results,failures) #ignore aggregated metrics for nowS
@@ -13,7 +18,7 @@ class modelStrategy(flwr.server.strategy.FedAvg):
             aggregated_array = flwr.common.parameters_to_ndarrays(aggregated_weights)
 
             #save the numpy array to a file
-            numpy.savez("global_model.npz",*aggregated_array)
+            numpy.savez(GLOBAL_MODEL_PATH,*aggregated_array)
             print("global weights saved successfully")
 
         return aggregated_weights,_

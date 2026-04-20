@@ -2,12 +2,15 @@ import pandas as pd
 import numpy as np
 import os
 
+from utilities.path_config import get_bank_file
+
+
 # Define the folders where your bank data is stored
-BANKS = ['bank_a_data', 'bank_b_data', 'bank_c_data']
+BANKS = ['banka', 'bankb', 'bankc']
 
 def enrich_bank_data():
     for bank in BANKS:
-        trade_path = os.path.join(bank, "trade_docs.csv")
+        trade_path = get_bank_file(bank, "trade_docs.csv")
         
         if not os.path.exists(trade_path):
             print(f"⚠️ Skipping {bank}: trade_docs.csv not found.")
@@ -47,7 +50,7 @@ def enrich_bank_data():
         df.loc[fraud_mask, 'device_entropy'] = np.random.uniform(0.75, 0.99)
 
         # 5. Save as 'trade_docs_enriched.csv' in the SAME bank folder
-        output_path = os.path.join(bank, "trade_docs_enriched.csv")
+        output_path = get_bank_file(bank, "trade_docs_enriched.csv")
         df.to_csv(output_path, index=False)
         print(f"✅ Enriched {bank} data. Saved to {output_path}")
 

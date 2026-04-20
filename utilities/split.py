@@ -2,10 +2,12 @@ import pandas as pd
 import os
 import numpy as np
 
-banks = ['bank_a', 'bank_b', 'bank_c']
+from utilities.path_config import get_bank_file, get_bank_path
+
+banks = ['banka', 'bankb', 'bankc']
 
 for bank in banks:
-    os.makedirs(f'{bank}_data', exist_ok=True)
+    os.makedirs(get_bank_path(bank), exist_ok=True)
 
 kyc = pd.read_csv('kyc.csv')
 swift = pd.read_csv('swift.csv')
@@ -42,9 +44,9 @@ for name, kyc_df in kyc_dict.items():
     bank_kyc = bank_kyc.reset_index(drop=True)
 
     # Save
-    bank_kyc.to_csv(f'{name}_data/kyc.csv', index=False)
-    bank_swift.to_csv(f'{name}_data/swift.csv', index=False)
-    bank_trade.to_csv(f'{name}_data/trade_docs.csv', index=False)
+    bank_kyc.to_csv(get_bank_file(name, 'kyc.csv'), index=False)
+    bank_swift.to_csv(get_bank_file(name, 'swift.csv'), index=False)
+    bank_trade.to_csv(get_bank_file(name, 'trade_docs.csv'), index=False)
 
     print(f"✅ {name.upper()} Created:")
     print(f" Entities: {len(bank_kyc)}")

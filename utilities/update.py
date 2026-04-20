@@ -1,11 +1,13 @@
 import pandas as pd
 import numpy as np
 
+from utilities.path_config import get_bank_file
+
 def update_to_tbml(bank_prefix):
     # Load existing files
-    kyc = pd.read_csv(f"{bank_prefix}_data/kyc.csv")
-    swift = pd.read_csv(f"{bank_prefix}_data/swift.csv")
-    trade = pd.read_csv(f"{bank_prefix}_data/trade_docs.csv")
+    kyc = pd.read_csv(get_bank_file(bank_prefix, "kyc.csv"))
+    swift = pd.read_csv(get_bank_file(bank_prefix, "swift.csv"))
+    trade = pd.read_csv(get_bank_file(bank_prefix, "trade_docs.csv"))
 
     # 1. Feature: Device Entropy (Count unique IPs per entity)
     entropy = swift.groupby('sender_id')['device_ip'].nunique().reset_index()
@@ -33,9 +35,9 @@ def update_to_tbml(bank_prefix):
     swift['label'] = m.apply(classify, axis=1)
     
     # Save back updated files
-    kyc.to_csv(f"{bank_prefix}_data/kyc.csv", index=False)
-    swift.to_csv(f"{bank_prefix}_data/swift.csv", index=False)
+    kyc.to_csv(get_bank_file(bank_prefix, "kyc.csv"), index=False)
+    swift.to_csv(get_bank_file(bank_prefix, "swift.csv"), index=False)
     print(f"✅ Updated {bank_prefix} with TBML labels.")
 
-for b in ['bank_a', 'bank_b', 'bank_c']:
+for b in ['banka', 'bankb', 'bankc']:
     update_to_tbml(b)
