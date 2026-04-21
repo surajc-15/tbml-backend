@@ -147,7 +147,12 @@ for message in consumer:
     # Sequence data needs shape [batch, seq_len, features] -> [1, 1, 1]
     seq_data = swift_edge_attr.unsqueeze(0)
 
-    # 3. Ground Truth Engine Inference (Bypassing PyTorch)
+    # 3. Model Forward Pass & Hybrid Logic
+    with torch.no_grad():
+        logits = model(kyc_x, edge_index, swift_edge_attr, seq_data, trade_features)
+        model_pred = torch.argmax(logits, dim=1).item()
+
+    # Calculate heuristic score for explanations and override logic
     w1 = 0.0
     if float(sender.get("dorm_days", 0)) > 180 and float(sender.get("device_entropy", 0)) > 0.5:
         w1 = 0.25
@@ -173,14 +178,15 @@ for message in consumer:
             w3 = 0.15
 
     score = w1 + w2 + w3
-    print(f"   📊 AI Score Breakdown: Core Risk: {score:.2f} (w1:{w1}, w2:{w2}, w3:{w3})")
     
-    if score >= 0.7:
-        prediction = 2
-    elif score >= 0.3:
+    # Hybrid Prediction Logic
+    if model_pred == 0 and score >= 0.7:
         prediction = 1
+        print(f"   📊 AI Prediction: CLEAN (0), but Heuristic Score ({score:.2f}) overrode to SUSPICIOUS (1).")
     else:
-        prediction = 0
+        prediction = model_pred
+        class_str = ["CLEAN (0)", "SUSPICIOUS (1)", "FRAUD (2)"][prediction]
+        print(f"   📊 AI Prediction: {class_str} | Heuristic Score: {score:.2f}")
 
     # 4. Action / Output
     if prediction > 0:

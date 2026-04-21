@@ -1,37 +1,28 @@
-import os
-
 import pandas as pd
+import os
 from neo4j import GraphDatabase
 
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utilities.path_config import get_bank_file, get_bank_path
-
+# --- CONFIG (Updated for Local Mac Execution) ---
 BANKS = {
-    # "banka": {
-    #     "uri": "bolt://localhost:4000",
-    #     "path": get_bank_path("banka"),
-    # },
-    # "bankb": {
-    #     "uri": "bolt://localhost:4001",
-    #     "path": get_bank_path("bankb"),
-    # },
-    "bankc": {
-        "uri": "bolt://localhost:4002",
-        "path": get_bank_path("bankc"),
+    "banka": {
+        "uri": "bolt://localhost:4000", 
+        "path": "graph_database/data/Banks/Bank_A" 
     },
+    "bankb": {
+        "uri": "bolt://localhost:4001", 
+        "path": "graph_database/data/Banks/Bank_B"
+    },
+    "bankc": {  
+        "uri": "bolt://localhost:4002", 
+        "path": "graph_database/data/Banks/Bank_C"
+    }
 }
-CHUNK_SIZE = 5000    #50000 originally 
+CHUNK_SIZE = 50000 
 
 def ingest_bank(bank_name, config):
     print(f"\n🚀 Starting {bank_name}...")
     driver = GraphDatabase.driver(config['uri'], auth=("", ""))
     path = config['path']
-    trade_path = get_bank_file(bank_name, "trade_docs_enriched.csv")
-    if not os.path.exists(trade_path):
-        trade_path = get_bank_file(bank_name, "trade_docs.csv")
-    if not os.path.exists(trade_path):
-        trade_path = get_bank_file(bank_name, "trade.csv")
     
     with driver.session() as session:
         session.run("CREATE INDEX ON :Account(id)")
@@ -41,7 +32,7 @@ def ingest_bank(bank_name, config):
 
     # 1. Accounts (NOW WITH KYC ML FEATURES)
     print(f"   👤 Loading Accounts for {bank_name}...")
-    for chunk in pd.read_csv(get_bank_file(bank_name, "kyc.csv"), chunksize=CHUNK_SIZE):
+    for chunk in pd.read_csv(os.path.join(path, "kyc.csv"), chunksize=CHUNK_SIZE):
         with driver.session() as session:
             session.run("""
                 UNWIND $batch AS row 
@@ -54,7 +45,7 @@ def ingest_bank(bank_name, config):
     
     # 2. Documents (NOW WITH TBML ML FEATURES)
     print(f"   📄 Loading Documents for {bank_name}...")
-    for chunk in pd.read_csv(trade_path, chunksize=CHUNK_SIZE):
+    for chunk in pd.read_csv(os.path.join(path, "trade.csv"), chunksize=CHUNK_SIZE):
         with driver.session() as session:
             session.run("""
                 UNWIND $batch AS row 
@@ -67,7 +58,7 @@ def ingest_bank(bank_name, config):
 
     # 3. SWIFT + Links (Remains the same)
     print(f"   💸 Loading SWIFT & Linking for {bank_name}...")
-    for chunk in pd.read_csv(get_bank_file(bank_name, "swift.csv"), chunksize=CHUNK_SIZE):
+    for chunk in pd.read_csv(os.path.join(path, "swift.csv"), chunksize=CHUNK_SIZE):
         with driver.session() as session:
             session.run("""
                 UNWIND $batch AS row
