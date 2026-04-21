@@ -26,3 +26,7 @@ Banks/
 
 # Model artifacts (keep if you want; comment out to commit)
 # *.npz
+
+graph_database/data/bank_a_data
+graph_database/data/bank_b_data
+graph_database/data/bank_c_data
