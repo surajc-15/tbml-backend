@@ -150,6 +150,7 @@ for message in consumer:
     # 3. Model Forward Pass & Hybrid Logic
     with torch.no_grad():
         logits = model(kyc_x, edge_index, swift_edge_attr, seq_data, trade_features)
+        print("values recieved are ", logits, "and the argumenrts after converted are \n", kyc_x, "\n", edge_index, "\n", swift_edge_attr, "\n", seq_data, "\n", trade_features)
         model_pred = torch.argmax(logits, dim=1).item()
 
     # Calculate heuristic score for explanations and override logic

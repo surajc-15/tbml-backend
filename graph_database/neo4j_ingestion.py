@@ -4,20 +4,20 @@ from neo4j import GraphDatabase
 
 # --- CONFIG (Updated for Local Mac Execution) ---
 BANKS = {
-    "banka": {
-        "uri": "bolt://localhost:4000", 
-        "path": "graph_database/data/Banks/Bank_A" 
-    },
-    "bankb": {
-        "uri": "bolt://localhost:4001", 
-        "path": "graph_database/data/Banks/Bank_B"
-    },
+    # "banka": {
+    #     "uri": "bolt://localhost:4000", 
+    #     "path": "graph_database/data/Banks/Bank_A" 
+    # },
+    # "bankb": {
+    #     "uri": "bolt://localhost:4001", 
+    #     "path": "graph_database/data/Banks/Bank_B"
+    # },
     "bankc": {  
         "uri": "bolt://localhost:4002", 
         "path": "graph_database/data/Banks/Bank_C"
     }
 }
-CHUNK_SIZE = 50000 
+CHUNK_SIZE = 1000 
 
 def ingest_bank(bank_name, config):
     print(f"\n🚀 Starting {bank_name}...")
