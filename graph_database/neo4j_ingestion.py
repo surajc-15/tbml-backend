@@ -6,15 +6,15 @@ from neo4j import GraphDatabase
 BANKS = {
     # "banka": {
     #     "uri": "bolt://localhost:4000", 
-    #     "path": "graph_database/data/Banks/Bank_A" 
+    #     "path": "data/Banks/Bank_A"
     # },
     # "bankb": {
     #     "uri": "bolt://localhost:4001", 
-    #     "path": "graph_database/data/Banks/Bank_B"
+    #     "path": "data/Banks/Bank_B"
     # },
     "bankc": {  
         "uri": "bolt://localhost:4002", 
-        "path": "graph_database/data/Banks/Bank_C"
+        "path": "data/Banks/Bank_C"
     }
 }
 CHUNK_SIZE = 1000 
@@ -77,6 +77,11 @@ def ingest_bank(bank_name, config):
     print(f"✅ {bank_name} finished successfully!")
 
 if __name__ == "__main__":
+
+    print(f"Current Working Directory: {os.getcwd()}")
+    target_path = "graph_database/data/Banks/Bank_A"
+    print(f"Checking path: {os.path.abspath(target_path)}")
+    print(f"Exists? {os.path.exists(target_path)}")
     for name, cfg in BANKS.items():
         if os.path.exists(cfg['path']):
             ingest_bank(name, cfg)

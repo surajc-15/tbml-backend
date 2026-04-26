@@ -7,3 +7,11 @@ docker run -d --network major_project_network --name memgraph_bankc -p 4002:7687
 cd graph_database
 docker-compose up -d
 cd ..
+
+
+
+#cypher query to view all graph_database
+MATCH (n)-[r]->(m)
+RETURN n, r, m
+LIMIT 200
+
