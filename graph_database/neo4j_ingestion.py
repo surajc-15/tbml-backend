@@ -17,7 +17,7 @@ BANKS = {
         "path": "data/Banks/Bank_C"
     }
 }
-CHUNK_SIZE = 1000 
+CHUNK_SIZE = 5000
 
 def ingest_bank(bank_name, config):
     print(f"\n🚀 Starting {bank_name}...")

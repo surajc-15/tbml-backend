@@ -14,7 +14,6 @@ from model import TBML_DetectionModel
 # --- 1. CONFIG & DOCKER PORT MAPPING ---
 parser = argparse.ArgumentParser()
 parser.add_argument("--bank", type=str, required=True, choices=['banka', 'bankb', 'bankc'])
-parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
 args = parser.parse_args()
 
 # Map the bank argument to your specific Docker ports
@@ -34,7 +33,7 @@ def get_all_msg_ids(uri, user, password):
     """Automatically fetches all transaction IDs from this specific bank's Memgraph instance."""
     driver = GraphDatabase.driver(uri, auth=(user, password))
     with driver.session() as session:
-        result = session.run("MATCH (t:Transaction) RETURN t.id AS msg_id LIMIT 500000" ) # Adjust limit as needed
+        result = session.run("MATCH (t:Transaction) RETURN t.id AS msg_id LIMIT 100000" ) # Adjust limit as needed
         ids = [record["msg_id"] for record in result]
     driver.close()
     return ids
@@ -86,21 +85,21 @@ class MemgraphTBMLDataset(Dataset):
 
 # --- 4. FLOWER FEDERATED CLIENT ---
 class BankClient(fl.client.NumPyClient):
-    def __init__(self, model, train_loader, test_loader, device):
+    def __init__(self, model, train_loader, test_loader):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model
+        self.model.to(self.device)
         self.train_loader = train_loader
         self.test_loader = test_loader
-        self.device = device
-        self.model.to(self.device)
         self.criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 10.0, 20.0], device=self.device))
-        self.optimizer = optim.Adam(model.parameters(), lr=0.001)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
 
     def get_parameters(self, config):
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
     def set_parameters(self, parameters):
         params_dict = zip(self.model.state_dict().keys(), parameters)
-        state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
+        state_dict = OrderedDict({k: torch.tensor(v, device=self.device) for k, v in params_dict})
         self.model.load_state_dict(state_dict, strict=True)
 
     def fit(self, parameters, config):
@@ -114,14 +113,13 @@ class BankClient(fl.client.NumPyClient):
                 kyc_x, edge_index = kyc_x[0], edge_index[0]
                 swift_edge_attr, label = swift_edge_attr[0], label[0]
                 trade_features = trade_features[0].unsqueeze(0)
-                seq_data = seq_data[0]
 
-                kyc_x = kyc_x.to(self.device, non_blocking=True)
-                edge_index = edge_index.to(self.device, non_blocking=True)
-                swift_edge_attr = swift_edge_attr.to(self.device, non_blocking=True)
-                seq_data = seq_data.to(self.device, non_blocking=True)
-                trade_features = trade_features.to(self.device, non_blocking=True)
-                label = label.to(self.device, non_blocking=True)
+                kyc_x = kyc_x.to(self.device)
+                edge_index = edge_index.to(self.device)
+                swift_edge_attr = swift_edge_attr.to(self.device)
+                seq_data = seq_data.to(self.device)
+                trade_features = trade_features.to(self.device)
+                label = label.to(self.device)
 
                 self.optimizer.zero_grad()
                 logits = self.model(kyc_x, edge_index, swift_edge_attr, seq_data, trade_features)
@@ -145,14 +143,13 @@ class BankClient(fl.client.NumPyClient):
                 kyc_x, edge_index = kyc_x[0], edge_index[0]
                 swift_edge_attr, label = swift_edge_attr[0], label[0]
                 trade_features = trade_features[0].unsqueeze(0)
-                seq_data = seq_data[0]
 
-                kyc_x = kyc_x.to(self.device, non_blocking=True)
-                edge_index = edge_index.to(self.device, non_blocking=True)
-                swift_edge_attr = swift_edge_attr.to(self.device, non_blocking=True)
-                seq_data = seq_data.to(self.device, non_blocking=True)
-                trade_features = trade_features.to(self.device, non_blocking=True)
-                label = label.to(self.device, non_blocking=True)
+                kyc_x = kyc_x.to(self.device)
+                edge_index = edge_index.to(self.device)
+                swift_edge_attr = swift_edge_attr.to(self.device)
+                seq_data = seq_data.to(self.device)
+                trade_features = trade_features.to(self.device)
+                label = label.to(self.device)
 
                 logits = self.model(kyc_x, edge_index, swift_edge_attr, seq_data, trade_features)
                 loss = self.criterion(logits, label.unsqueeze(0))
@@ -186,18 +183,12 @@ if __name__ == "__main__":
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
     # Note: batch_size=1 used here to safely stream individual subgraphs into PyG's GATv2Conv
-    selected_device = torch.device("cuda" if (args.device == "auto" and torch.cuda.is_available()) or args.device == "cuda" else "cpu")
-    if args.device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("--device cuda was requested, but CUDA is not available.")
-
-    pin_memory = selected_device.type == "cuda"
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, pin_memory=pin_memory)
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, pin_memory=pin_memory)
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     # 3. Start Flower Client
     model = TBML_DetectionModel()
-    client = BankClient(model, train_loader, test_loader, selected_device)
-    print(f"🖥️  Training device for {args.bank.upper()}: {selected_device}")
+    client = BankClient(model, train_loader, test_loader)
     
     print(f"🚀 {args.bank.upper()} connecting to Central Server...")
     fl.client.start_numpy_client(server_address="127.0.0.1:8085", client=client)

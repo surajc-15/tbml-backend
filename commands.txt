@@ -15,3 +15,49 @@ MATCH (n)-[r]->(m)
 RETURN n, r, m
 LIMIT 200
 
+
+# View transaction flow (Account → Transaction → Account)
+MATCH (a:Account)-[:SENDS]->(t:Transaction)-[:TO]->(b:Account)
+RETURN a, t, b
+LIMIT 100
+
+
+# View transactions with documents
+MATCH (a:Account)-[:SENDS]->(t:Transaction)-[:TO]->(b:Account),
+      (t)-[:HAS_DOC]->(d:Document)
+RETURN a, t, b, d
+LIMIT 100
+
+
+# Get high-risk transactions
+MATCH (t:Transaction)
+WHERE t.risk_score > 0.8
+RETURN t
+ORDER BY t.risk_score DESC
+LIMIT 50
+
+
+# Detect dormant account activity
+MATCH (a:Account)-[:SENDS]->(t:Transaction)
+WHERE a.dormant_days > 180
+RETURN a, t
+LIMIT 50
+
+
+# Detect trade anomalies (price deviation)
+MATCH (t:Transaction)-[:HAS_DOC]->(d:Document)
+WHERE d.price_deviation > 2
+RETURN t, d
+LIMIT 50
+
+
+# Get suspicious transactions for STR
+MATCH (t:Transaction)
+WHERE t.prediction = "SUSPICIOUS"
+RETURN t.transaction_id, t.risk_score, t.prediction
+LIMIT 50
+
+
+# Debug: check node distribution
+MATCH (n)
+RETURN labels(n), COUNT(n)
