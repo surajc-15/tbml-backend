@@ -61,3 +61,11 @@ LIMIT 50
 # Debug: check node distribution
 MATCH (n)
 RETURN labels(n), COUNT(n)
+
+
+
+
+#commadn to run teh client file 
+python client.py --bank banka
+python client.py --bank bankb
+python client.py --bank bankc

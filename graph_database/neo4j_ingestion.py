@@ -4,18 +4,18 @@ from neo4j import GraphDatabase
 
 # --- CONFIG (Updated for Local Mac Execution) ---
 BANKS = {
-    "banka": {
-        "uri": "bolt://localhost:4000", 
-        "path": "data/Banks/Bank_A" 
-    },
-    "bankb": {
-        "uri": "bolt://localhost:4001", 
-        "path": "data/Banks/Bank_B"
-    },
-    # "bankc": {
-    #     "uri": "bolt://localhost:4002", 
-    #     "path": "data/Banks/Bank_C"
-    # }
+    # "banka": {
+    #     "uri": "bolt://localhost:4000", 
+    #     "path": "data/Banks/Bank_A" 
+    # },
+    # "bankb": {
+    #     "uri": "bolt://localhost:4001", 
+    #     "path": "data/Banks/Bank_B"
+    # },
+    "bankc": {
+        "uri": "bolt://localhost:4002", 
+        "path": "data/Banks/Bank_C"
+    }
 }
 CHUNK_SIZE = 50000 
 

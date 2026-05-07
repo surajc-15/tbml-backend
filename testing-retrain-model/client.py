@@ -7,9 +7,18 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torch_geometric.nn import GATv2Conv
 from neo4j import GraphDatabase
 import argparse
+import time
 from collections import OrderedDict
+import sys
 import random # --- ADDED FOR DATA SHUFFLING ---
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from model import TBML_DetectionModel
+from utilities.logger import log_event, setup_logger
 
 # --- IMPORTS FOR GRAPHING & METRICS ---
 import numpy as np
@@ -33,6 +42,10 @@ MEMGRAPH_URI = f"bolt://localhost:{PORT_MAP[args.bank]}"
 # Replace with actual auth if you set it in Docker, otherwise leave empty
 MEMGRAPH_USER = ""
 MEMGRAPH_PASS = ""
+SAMPLE_SIZE = 800000
+BATCH_SIZE = 16
+LOCAL_EPOCHS = 3
+logger = setup_logger("tbml.client", use_color=False)
 
 
 # --- 2. GRAPH GENERATOR HELPER FUNCTION ---
@@ -116,13 +129,13 @@ def get_all_msg_ids(uri, user, password, sample_size=150000):
     driver = GraphDatabase.driver(uri, auth=(user, password))
     with driver.session() as session:
         # 1. Pull ALL transaction IDs (pulling just the string IDs is very fast and low-memory)
-        print("Fetching all transaction IDs from Memgraph...")
+        log_event(logger, headline="Fetching transaction IDs", status="INFO", message="Querying Memgraph for transaction IDs")
         result = session.run("MATCH (t:Transaction) RETURN t.id AS msg_id")
         ids = [record["msg_id"] for record in result]
     driver.close()
 
     # 2. Randomly shuffle the deck so Fraud is distributed evenly
-    print("Shuffling dataset to ensure typology representation...")
+    log_event(logger, headline="Shuffling transaction IDs", status="INFO", message="Randomizing sampled IDs before split")
     random.shuffle(ids)
 
     # 3. Take a safe slice (150k) to train on
@@ -200,10 +213,17 @@ class BankClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         self.set_parameters(parameters)
         self.model.train()
+        train_samples = len(self.train_loader.dataset)
+        total_batches = len(self.train_loader)
+        log_event(logger, headline="Training started", status="INFO", message=f"Starting {LOCAL_EPOCHS} epochs on {train_samples} samples with batch size {BATCH_SIZE}")
         
         # Local Training Loop
-        for epoch in range(3): # 3 local epochs per federated round
-            for kyc_x, edge_index, swift_edge_attr, seq_data, trade_features, label in self.train_loader:
+        overall_start = time.perf_counter()
+        for epoch in range(LOCAL_EPOCHS):
+            epoch_start = time.perf_counter()
+            epoch_loss = 0.0
+            epoch_total = 0
+            for batch_idx, (kyc_x, edge_index, swift_edge_attr, seq_data, trade_features, label) in enumerate(self.train_loader, start=1):
                 # Squeeze the batch dimension for PyG compatibility and move to device
                 kyc_x, edge_index = kyc_x[0].to(self.device), edge_index[0].to(self.device)
                 swift_edge_attr, label = swift_edge_attr[0].to(self.device), label[0].to(self.device)
@@ -216,12 +236,32 @@ class BankClient(fl.client.NumPyClient):
                 loss = self.criterion(logits, label.unsqueeze(0))
                 loss.backward()
                 self.optimizer.step()
+                epoch_loss += loss.item()
+                epoch_total += 1
+
+                if batch_idx == 1 or batch_idx == total_batches or batch_idx % max(total_batches // 10, 1) == 0:
+                    epoch_pct = (batch_idx / max(total_batches, 1)) * 100.0
+                    sample_pct = (epoch_total / max(train_samples, 1)) * 100.0
+                    log_event(
+                        logger,
+                        headline=f"Epoch {epoch + 1} progress",
+                        status="INFO",
+                        message=f"Epoch {epoch + 1}/{LOCAL_EPOCHS}: {batch_idx}/{total_batches} batches complete ({epoch_pct:.1f}%), {epoch_total}/{train_samples} samples seen ({sample_pct:.1f}%), last loss {loss.item():.6f}",
+                    )
+
+            log_event(
+                logger,
+                headline=f"Epoch {epoch + 1} finished",
+                status="SUCCESS",
+                message=f"Epoch {epoch + 1}/{LOCAL_EPOCHS} done. Average loss {epoch_loss / max(epoch_total, 1):.6f}. Time this epoch {time.perf_counter() - epoch_start:.1f}s. Total training time {time.perf_counter() - overall_start:.1f}s.",
+            )
                 
         return self.get_parameters(config={}), len(self.train_loader.dataset), {}
 
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
         self.model.eval()
+        log_event(logger, headline="Evaluation started", status="INFO", message=f"Evaluating on {len(self.test_loader.dataset)} samples with batch size {BATCH_SIZE}")
         
         total_loss = 0.0
         all_preds = []
@@ -260,16 +300,21 @@ class BankClient(fl.client.NumPyClient):
         # STR Alert Check
         laundering_count = all_preds.count(2)
         if laundering_count > 0:
-            print(f"\n🚨 STR ALERT [{args.bank.upper()}] - {laundering_count} Typologies detected in evaluation!")
+            log_event(
+                logger,
+                headline="STR alert",
+                status="WARNING",
+                message=f"Detected {laundering_count} suspicious typologies during evaluation.",
+            )
 
         return float(total_loss / len(self.test_loader)), len(self.test_loader.dataset), {"accuracy": accuracy, "f1_macro": f1_m}
 
 if __name__ == "__main__":
-    print(f"🏦 Initializing {args.bank.upper()} on port {PORT_MAP[args.bank]}...")
+    log_event(logger, headline="Client initialization", status="INFO", message=f"Starting client for {args.bank.upper()} on port {PORT_MAP[args.bank]}")
 
     # 1. Dynamically pull and shuffle msg_ids
-    all_ids = get_all_msg_ids(MEMGRAPH_URI, MEMGRAPH_USER, MEMGRAPH_PASS, sample_size=150000)
-    print(f"Loaded {len(all_ids)} randomized transactions from Memgraph.")
+    all_ids = get_all_msg_ids(MEMGRAPH_URI, MEMGRAPH_USER, MEMGRAPH_PASS, sample_size=SAMPLE_SIZE)
+    log_event(logger, headline="Data ready", status="SUCCESS", message=f"Loaded and shuffled {len(all_ids)} transaction IDs from Memgraph (sample size {SAMPLE_SIZE})")
 
     # 2. Split into Train (80%) and Test (20%)
     dataset = MemgraphTBMLDataset(MEMGRAPH_URI, MEMGRAPH_USER, MEMGRAPH_PASS, all_ids)
@@ -277,18 +322,18 @@ if __name__ == "__main__":
     test_size = len(dataset) - train_size
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
-    # Note: batch_size=1 used here to safely stream individual subgraphs into PyG's GATv2Conv
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    log_event(logger, headline="Configuration", status="INFO", message=f"Train split: {len(train_dataset)} samples, test split: {len(test_dataset)} samples, batch size {BATCH_SIZE}, epochs {LOCAL_EPOCHS}")
 
     # 3. Device setup and start Flower Client
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    log_event(logger, headline="Device selected", status="INFO", message=f"Using {device} for training")
     if device.type == 'cuda':
         torch.backends.cudnn.benchmark = True
 
     model = TBML_DetectionModel()
     client = BankClient(model, train_loader, test_loader, device)
     
-    print(f"🚀 {args.bank.upper()} connecting to Central Server...")
+    log_event(logger, headline="Connecting", status="INFO", message="Connecting to Flower server at 127.0.0.1:8085")
     fl.client.start_numpy_client(server_address="127.0.0.1:8085", client=client)

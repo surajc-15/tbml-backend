@@ -3,7 +3,15 @@ import flwr as flwr
 from model import TBML_DetectionModel
 class modelStrategy(flwr.server.strategy.FedAvg):
     def aggregate_fit(self, curr_round, results, failures):
+        print(
+            f"[SERVER] Round {curr_round}: received {len(results)} fit results, "
+            f"failures={len(failures)}"
+        )
         aggregated_weights,_ = super().aggregate_fit(curr_round,results,failures) #ignore aggregated metrics for nowS
+        if aggregated_weights is None:
+            print(f"[SERVER] Round {curr_round}: aggregation failed (no weights returned)")
+        else:
+            print(f"[SERVER] Round {curr_round}: aggregation completed successfully")
 
         if aggregated_weights is not None and curr_round==10:
             print(f"saving global weights for round {curr_round}")
