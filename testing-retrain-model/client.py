@@ -7,9 +7,16 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torch_geometric.nn import GATv2Conv
 from neo4j import GraphDatabase
 import argparse
-from sklearn.metrics import f1_score
 from collections import OrderedDict
+import random # --- ADDED FOR DATA SHUFFLING ---
 from model import TBML_DetectionModel
+
+# --- IMPORTS FOR GRAPHING & METRICS ---
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc, f1_score, precision_recall_fscore_support
+from sklearn.preprocessing import label_binarize
 
 # --- 1. CONFIG & DOCKER PORT MAPPING ---
 parser = argparse.ArgumentParser()
@@ -28,15 +35,98 @@ MEMGRAPH_USER = ""
 MEMGRAPH_PASS = ""
 
 
+# --- 2. GRAPH GENERATOR HELPER FUNCTION ---
+def generate_presentation_metrics(y_true, y_pred, y_probs, bank_name):
+    classes = [0, 1, 2]
+    class_names = ['Clean (0)', 'Watchlist (1)', 'Fraud (2)']
+    
+    print(f"\n--- {bank_name.upper()} FINAL EVALUATION METRICS ---")
+    print(classification_report(y_true, y_pred, labels=classes, target_names=class_names, zero_division=0))
+    # 1. Generate and Save Confusion Matrix
+    cm = confusion_matrix(y_true, y_pred, labels=classes)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+    plt.title(f'{bank_name.upper()} - TBML Confusion Matrix')
+    plt.ylabel('Actual Truth')
+    plt.xlabel('AI Prediction')
+    plt.tight_layout()
+    plt.savefig(f'{bank_name}_confusion_matrix.png', dpi=300)
+    plt.close()
+
+    # 2. Generate and Save ROC Curve (Focusing on the Fraud Class)
+    y_true_bin = label_binarize(y_true, classes=classes)
+    fraud_class_idx = 2
+    
+    if np.sum(y_true_bin[:, fraud_class_idx]) > 0:
+        fpr, tpr, _ = roc_curve(y_true_bin[:, fraud_class_idx], y_probs[:, fraud_class_idx])
+        roc_auc = auc(fpr, tpr)
+
+        plt.figure(figsize=(8, 6))
+        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'Fraud ROC curve (area = {roc_auc:.2f})')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title(f'{bank_name.upper()} - Receiver Operating Characteristic (Fraud)')
+        plt.legend(loc="lower right")
+        plt.tight_layout()
+        plt.savefig(f'{bank_name}_roc_curve.png', dpi=300)
+        plt.close()
+
+    # 3. Generate and Save Precision, Recall, and F1 Score Bar Chart
+    precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, labels=classes, zero_division=0)
+    
+    x = np.arange(len(class_names))
+    width = 0.25 
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    rects1 = ax.bar(x - width, precision, width, label='Precision', color='skyblue')
+    rects2 = ax.bar(x, recall, width, label='Recall', color='lightgreen')
+    rects3 = ax.bar(x + width, f1, width, label='F1-Score', color='salmon')
+
+    ax.set_ylabel('Score (0.0 to 1.0)')
+    ax.set_title(f'{bank_name.upper()} - Model Performance by Class')
+    ax.set_xticks(x)
+    ax.set_xticklabels(class_names)
+    ax.set_ylim([0.0, 1.1]) 
+    ax.legend(loc='upper right')
+
+    def autolabel(rects):
+        for rect in rects:
+            height = rect.get_height()
+            ax.annotate(f'{height:.2f}',
+                        xy=(rect.get_x() + rect.get_width() / 2, height),
+                        xytext=(0, 3), 
+                        textcoords="offset points",
+                        ha='center', va='bottom', fontsize=9)
+
+    autolabel(rects1)
+    autolabel(rects2)
+    autolabel(rects3)
+
+    plt.tight_layout()
+    plt.savefig(f'{bank_name}_performance_metrics.png', dpi=300)
+    plt.close()
+
+
 # --- 3. MEMGRAPH DATA BRIDGE ---
-def get_all_msg_ids(uri, user, password):
-    """Automatically fetches all transaction IDs from this specific bank's Memgraph instance."""
+def get_all_msg_ids(uri, user, password, sample_size=150000):
+    """Fetches all IDs and safely shuffles them in Python to ensure Fraud representation."""
     driver = GraphDatabase.driver(uri, auth=(user, password))
     with driver.session() as session:
-        result = session.run("MATCH (t:Transaction) RETURN t.id AS msg_id LIMIT 100000" ) # Adjust limit as needed
+        # 1. Pull ALL transaction IDs (pulling just the string IDs is very fast and low-memory)
+        print("Fetching all transaction IDs from Memgraph...")
+        result = session.run("MATCH (t:Transaction) RETURN t.id AS msg_id")
         ids = [record["msg_id"] for record in result]
     driver.close()
-    return ids
+
+    # 2. Randomly shuffle the deck so Fraud is distributed evenly
+    print("Shuffling dataset to ensure typology representation...")
+    random.shuffle(ids)
+
+    # 3. Take a safe slice (150k) to train on
+    return ids[:sample_size]
 
 class MemgraphTBMLDataset(Dataset):
     def __init__(self, uri, user, password, transaction_ids):
@@ -85,13 +175,16 @@ class MemgraphTBMLDataset(Dataset):
 
 # --- 4. FLOWER FEDERATED CLIENT ---
 class BankClient(fl.client.NumPyClient):
-    def __init__(self, model, train_loader, test_loader):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = model
-        self.model.to(self.device)
+    def __init__(self, model, train_loader, test_loader, device):
+        self.device = device
+        # Move model to the target device first
+        self.model = model.to(self.device)
         self.train_loader = train_loader
         self.test_loader = test_loader
-        self.criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 10.0, 20.0], device=self.device))
+        # Ensure loss weights live on the same device
+        weights = torch.tensor([1.0, 10.0, 20.0], device=self.device)
+        self.criterion = nn.CrossEntropyLoss(weight=weights)
+        # Create optimizer after model is on the device
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
 
     def get_parameters(self, config):
@@ -100,6 +193,8 @@ class BankClient(fl.client.NumPyClient):
     def set_parameters(self, parameters):
         params_dict = zip(self.model.state_dict().keys(), parameters)
         state_dict = OrderedDict({k: torch.tensor(v, device=self.device) for k, v in params_dict})
+        # Ensure tensors are moved to cpu when loading into state_dict if needed by PyTorch
+        # but keep dtype/device consistent by loading directly (model is already on device)
         self.model.load_state_dict(state_dict, strict=True)
 
     def fit(self, parameters, config):
@@ -109,21 +204,15 @@ class BankClient(fl.client.NumPyClient):
         # Local Training Loop
         for epoch in range(3): # 3 local epochs per federated round
             for kyc_x, edge_index, swift_edge_attr, seq_data, trade_features, label in self.train_loader:
-                # Squeeze the batch dimension for PyG compatibility
-                kyc_x, edge_index = kyc_x[0], edge_index[0]
-                swift_edge_attr, label = swift_edge_attr[0], label[0]
-                trade_features = trade_features[0].unsqueeze(0)
-
-                kyc_x = kyc_x.to(self.device)
-                edge_index = edge_index.to(self.device)
-                swift_edge_attr = swift_edge_attr.to(self.device)
-                seq_data = seq_data.to(self.device)
-                trade_features = trade_features.to(self.device)
-                label = label.to(self.device)
+                # Squeeze the batch dimension for PyG compatibility and move to device
+                kyc_x, edge_index = kyc_x[0].to(self.device), edge_index[0].to(self.device)
+                swift_edge_attr, label = swift_edge_attr[0].to(self.device), label[0].to(self.device)
+                seq_data = seq_data[0].to(self.device)
+                trade_features = trade_features[0].unsqueeze(0).to(self.device)
 
                 self.optimizer.zero_grad()
                 logits = self.model(kyc_x, edge_index, swift_edge_attr, seq_data, trade_features)
-                
+
                 loss = self.criterion(logits, label.unsqueeze(0))
                 loss.backward()
                 self.optimizer.step()
@@ -137,27 +226,33 @@ class BankClient(fl.client.NumPyClient):
         total_loss = 0.0
         all_preds = []
         all_labels = []
+        all_probs = [] # ADDED to capture raw probabilities for ROC curve
 
         with torch.no_grad():
             for kyc_x, edge_index, swift_edge_attr, seq_data, trade_features, label in self.test_loader:
-                kyc_x, edge_index = kyc_x[0], edge_index[0]
-                swift_edge_attr, label = swift_edge_attr[0], label[0]
-                trade_features = trade_features[0].unsqueeze(0)
-
-                kyc_x = kyc_x.to(self.device)
-                edge_index = edge_index.to(self.device)
-                swift_edge_attr = swift_edge_attr.to(self.device)
-                seq_data = seq_data.to(self.device)
-                trade_features = trade_features.to(self.device)
-                label = label.to(self.device)
+                kyc_x, edge_index = kyc_x[0].to(self.device), edge_index[0].to(self.device)
+                swift_edge_attr, label = swift_edge_attr[0].to(self.device), label[0].to(self.device)
+                seq_data = seq_data[0].to(self.device)
+                trade_features = trade_features[0].unsqueeze(0).to(self.device)
 
                 logits = self.model(kyc_x, edge_index, swift_edge_attr, seq_data, trade_features)
                 loss = self.criterion(logits, label.unsqueeze(0))
-                
+
                 total_loss += loss.item()
+
+                # Apply Softmax to get probabilities (0.0 to 1.0)
+                probs = F.softmax(logits, dim=1)
                 preds = logits.argmax(dim=1)
+
+                all_probs.extend(probs.cpu().numpy())
                 all_preds.extend(preds.cpu().numpy())
                 all_labels.append(label.cpu().item())
+
+        # Extract metrics and trigger the graph generation
+        y_true = np.array(all_labels)
+        y_pred = np.array(all_preds)
+        y_probs = np.array(all_probs)
+        generate_presentation_metrics(y_true, y_pred, y_probs, args.bank)
 
         accuracy = sum(1 for p, l in zip(all_preds, all_labels) if p == l) / len(all_labels)
         f1_m = f1_score(all_labels, all_preds, average='macro', zero_division=0)
@@ -172,9 +267,9 @@ class BankClient(fl.client.NumPyClient):
 if __name__ == "__main__":
     print(f"🏦 Initializing {args.bank.upper()} on port {PORT_MAP[args.bank]}...")
 
-    # 1. Dynamically pull all msg_ids from this bank's Memgraph container
-    all_ids = get_all_msg_ids(MEMGRAPH_URI, MEMGRAPH_USER, MEMGRAPH_PASS)
-    print(f"Loaded {len(all_ids)} transactions from Memgraph.")
+    # 1. Dynamically pull and shuffle msg_ids
+    all_ids = get_all_msg_ids(MEMGRAPH_URI, MEMGRAPH_USER, MEMGRAPH_PASS, sample_size=150000)
+    print(f"Loaded {len(all_ids)} randomized transactions from Memgraph.")
 
     # 2. Split into Train (80%) and Test (20%)
     dataset = MemgraphTBMLDataset(MEMGRAPH_URI, MEMGRAPH_USER, MEMGRAPH_PASS, all_ids)
@@ -186,9 +281,14 @@ if __name__ == "__main__":
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
-    # 3. Start Flower Client
+    # 3. Device setup and start Flower Client
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
+
     model = TBML_DetectionModel()
-    client = BankClient(model, train_loader, test_loader)
+    client = BankClient(model, train_loader, test_loader, device)
     
     print(f"🚀 {args.bank.upper()} connecting to Central Server...")
     fl.client.start_numpy_client(server_address="127.0.0.1:8085", client=client)

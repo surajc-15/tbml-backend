@@ -4,20 +4,20 @@ from neo4j import GraphDatabase
 
 # --- CONFIG (Updated for Local Mac Execution) ---
 BANKS = {
-    # "banka": {
-    #     "uri": "bolt://localhost:4000", 
-    #     "path": "data/Banks/Bank_A"
-    # },
-    # "bankb": {
-    #     "uri": "bolt://localhost:4001", 
-    #     "path": "data/Banks/Bank_B"
-    # },
-    "bankc": {  
-        "uri": "bolt://localhost:4002", 
-        "path": "data/Banks/Bank_C"
-    }
+    "banka": {
+        "uri": "bolt://localhost:4000", 
+        "path": "data/Banks/Bank_A" 
+    },
+    "bankb": {
+        "uri": "bolt://localhost:4001", 
+        "path": "data/Banks/Bank_B"
+    },
+    # "bankc": {
+    #     "uri": "bolt://localhost:4002", 
+    #     "path": "data/Banks/Bank_C"
+    # }
 }
-CHUNK_SIZE = 5000
+CHUNK_SIZE = 50000 
 
 def ingest_bank(bank_name, config):
     print(f"\n🚀 Starting {bank_name}...")
@@ -56,8 +56,8 @@ def ingest_bank(bank_name, config):
                     d.ais_status = row.ais_status
             """, batch=chunk.to_dict('records'))
 
-    # 3. SWIFT + Links (Remains the same)
-    print(f"   💸 Loading SWIFT & Linking for {bank_name}...")
+    # 3. SWIFT + Links (NOW WITH LABELS)
+    print(f"   💸 Loading SWIFT, Labels & Linking for {bank_name}...")
     for chunk in pd.read_csv(os.path.join(path, "swift.csv"), chunksize=CHUNK_SIZE):
         with driver.session() as session:
             session.run("""
@@ -65,7 +65,8 @@ def ingest_bank(bank_name, config):
                 MERGE (s:Account {id: row.sender_id})
                 MERGE (r:Account {id: row.receiver_id})
                 CREATE (t:Transaction {id: row.msg_id})
-                SET t.amount = toFloat(row.amount)
+                SET t.amount = toFloat(row.amount),
+                    t.label = toInteger(row.label)   // <--- THIS IS THE MAGIC LINE
                 CREATE (s)-[:SENDS]->(t)
                 CREATE (t)-[:TO]->(r)
                 WITH row, t
@@ -77,11 +78,6 @@ def ingest_bank(bank_name, config):
     print(f"✅ {bank_name} finished successfully!")
 
 if __name__ == "__main__":
-
-    print(f"Current Working Directory: {os.getcwd()}")
-    target_path = "graph_database/data/Banks/Bank_A"
-    print(f"Checking path: {os.path.abspath(target_path)}")
-    print(f"Exists? {os.path.exists(target_path)}")
     for name, cfg in BANKS.items():
         if os.path.exists(cfg['path']):
             ingest_bank(name, cfg)

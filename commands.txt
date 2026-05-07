@@ -1,6 +1,6 @@
-docker run -d --network major_project_network --name memgraph_banka -p 4000:7687 -p 3000:3000 memgraph/memgraph
-docker run -d --network major_project_network --name memgraph_bankb -p 4001:7687 -p 3001:3000 memgraph/memgraph
-docker run -d --network major_project_network --name memgraph_bankc -p 4002:7687 -p 3002:3000 memgraph/memgraph
+docker run -d --network major_project_network --name memgraph_banka -p 4000:7687  memgraph/memgraph
+docker run -d --network major_project_network --name memgraph_bankb -p 4001:7687  memgraph/memgraph
+docker run -d --network major_project_network --name memgraph_bankc -p 4002:7687  memgraph/memgraph
 
 
 #setup kafka 
